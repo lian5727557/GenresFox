@@ -62,6 +62,12 @@
     "searchBoxPosition": {
         "message": "垂直位置"
     },
+    "searchBoxRadius": {
+        "message": "圓角"
+    },
+    "searchBoxShadow": {
+        "message": "陰影強度"
+    },
     "showShortcutNames": {
         "message": "顯示捷徑名稱"
     },

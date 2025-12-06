@@ -62,6 +62,12 @@
     "searchBoxPosition": {
         "message": "垂直位置"
     },
+    "searchBoxRadius": {
+        "message": "角丸"
+    },
+    "searchBoxShadow": {
+        "message": "影の強さ"
+    },
     "showShortcutNames": {
         "message": "ショートカット名を表示"
     },
