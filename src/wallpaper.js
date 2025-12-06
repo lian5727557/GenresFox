@@ -26,7 +26,10 @@ const WallpaperManager = (function () {
             WALLPAPER_VIGNETTE: '--wallpaper-vignette',
             SEARCH_WIDTH: '--search-width',
             SEARCH_POSITION: '--search-position',
-            SEARCH_SCALE: '--search-scale'
+            SEARCH_SCALE: '--search-scale',
+            SEARCH_RADIUS: '--search-radius',
+            SEARCH_SHADOW_ALPHA: '--search-shadow-alpha',
+            SEARCH_SHADOW_SOFT: '--search-shadow-soft'
         },
         BING_API: {
             // Using a CORS proxy or direct Bing API
@@ -58,13 +61,27 @@ const WallpaperManager = (function () {
     let _state = {
         currentWallpaperUrl: null,
         wallpaperSettings: { blur: 0, vignette: 0 },
-        searchBoxSettings: { width: 600, position: 40, scale: 100 },
+        searchBoxSettings: { width: 600, position: 40, scale: 100, radius: 36, shadow: 40 },
         wallpaperSource: CONFIG.WALLPAPER_SOURCES.DEFAULT,
         bingWallpaperInfo: null,
         isInitialized: false,
         dbInstance: null,
         bingPreloadScheduled: false
     };
+
+    const SEARCH_LIMITS = {
+        width: { min: 300, max: 1000, fallback: 600 },
+        position: { min: 0, max: 100, fallback: 40 },
+        scale: { min: 80, max: 150, fallback: 100 },
+        radius: { min: 4, max: 64, fallback: 36 },
+        shadow: { min: 0, max: 100, fallback: 40 }
+    };
+
+    function _clampSearchValue(val, { min, max, fallback }) {
+        const n = Number(val);
+        if (!Number.isFinite(n)) return fallback;
+        return Math.min(max, Math.max(min, n));
+    }
 
     // ==================== DOM Element References ====================
     let _elements = {
@@ -304,10 +321,16 @@ const WallpaperManager = (function () {
      * Apply search box settings
      */
     function _applySearchBoxSettings() {
-        const { width, position, scale } = _state.searchBoxSettings;
+        const { width, position, scale, radius, shadow } = _state.searchBoxSettings;
         _setCSSVar(CONFIG.CSS_VARS.SEARCH_WIDTH, `${width}px`);
-        _setCSSVar(CONFIG.CSS_VARS.SEARCH_POSITION, `${position}vh`);
+        _setCSSVar(CONFIG.CSS_VARS.SEARCH_POSITION, `${position}%`);
+        const shadowAlpha = Math.min(1, Math.max(0, shadow / 100));
+        const shadowSoft = Math.min(1, Math.max(0, shadowAlpha * 0.5));
+
         _setCSSVar(CONFIG.CSS_VARS.SEARCH_SCALE, (scale / 100).toString());
+        _setCSSVar(CONFIG.CSS_VARS.SEARCH_RADIUS, `${radius}px`);
+        _setCSSVar(CONFIG.CSS_VARS.SEARCH_SHADOW_ALPHA, shadowAlpha.toString());
+        _setCSSVar(CONFIG.CSS_VARS.SEARCH_SHADOW_SOFT, shadowSoft.toString());
     }
 
     /**
@@ -986,7 +1009,7 @@ const WallpaperManager = (function () {
             _setWallpaper('none');
             _state.wallpaperSource = CONFIG.WALLPAPER_SOURCES.DEFAULT;
         } else {
-            _showStatusMessage(_getLocalizedMessage('resetToBing', '已切换到 Bing 每日壁纸'), 2200);
+            _showStatusMessage(_getLocalizedMessage('resetToBing', 'Switched to Bing Daily Wallpaper'), 2200);
         }
         
         // Show upload content and hide preview after reset
@@ -1069,7 +1092,7 @@ const WallpaperManager = (function () {
      * @param {Event} e
      */
     function _handleSearchWidthChange(e) {
-        const value = parseInt(e.target.value, 10);
+        const value = _clampSearchValue(parseInt(e.target.value, 10), SEARCH_LIMITS.width);
         _state.searchBoxSettings.width = value;
 
         if (_elements.searchWidthValue) {
@@ -1090,11 +1113,11 @@ const WallpaperManager = (function () {
      * @param {Event} e
      */
     function _handleSearchPositionChange(e) {
-        const value = parseInt(e.target.value, 10);
+        const value = _clampSearchValue(parseInt(e.target.value, 10), SEARCH_LIMITS.position);
         _state.searchBoxSettings.position = value;
 
         if (_elements.searchPositionValue) {
-            _elements.searchPositionValue.textContent = `${value}vh`;
+            _elements.searchPositionValue.textContent = `${value}%`;
         }
 
         localStorage.setItem(
@@ -1111,11 +1134,53 @@ const WallpaperManager = (function () {
      * @param {Event} e
      */
     function _handleSearchScaleChange(e) {
-        const value = parseInt(e.target.value, 10);
+        const value = _clampSearchValue(parseInt(e.target.value, 10), SEARCH_LIMITS.scale);
         _state.searchBoxSettings.scale = value;
 
         if (_elements.searchScaleValue) {
             _elements.searchScaleValue.textContent = `${value}%`;
+        }
+
+        localStorage.setItem(
+            CONFIG.STORAGE_KEYS.SEARCH_BOX_SETTINGS,
+            JSON.stringify(_state.searchBoxSettings)
+        );
+
+        _applySearchBoxSettings();
+        _updateSearchPreview();
+    }
+
+    /**
+     * Handle search box radius slider change
+     * @param {Event} e
+     */
+    function _handleSearchRadiusChange(e) {
+        const value = _clampSearchValue(parseInt(e.target.value, 10), SEARCH_LIMITS.radius);
+        _state.searchBoxSettings.radius = value;
+
+        if (_elements.searchRadiusValue) {
+            _elements.searchRadiusValue.textContent = `${value}px`;
+        }
+
+        localStorage.setItem(
+            CONFIG.STORAGE_KEYS.SEARCH_BOX_SETTINGS,
+            JSON.stringify(_state.searchBoxSettings)
+        );
+
+        _applySearchBoxSettings();
+        _updateSearchPreview();
+    }
+
+    /**
+     * Handle search box shadow slider change
+     * @param {Event} e
+     */
+    function _handleSearchShadowChange(e) {
+        const value = _clampSearchValue(parseInt(e.target.value, 10), SEARCH_LIMITS.shadow);
+        _state.searchBoxSettings.shadow = value;
+
+        if (_elements.searchShadowValue) {
+            _elements.searchShadowValue.textContent = `${value}%`;
         }
 
         localStorage.setItem(
@@ -1133,7 +1198,7 @@ const WallpaperManager = (function () {
     function _updateSearchPreview() {
         if (!_elements.previewSearchBox) return;
 
-        const { width, position, scale } = _state.searchBoxSettings;
+        const { width, position, scale, radius, shadow } = _state.searchBoxSettings;
         
         // Calculate preview width as percentage (relative to preview container)
         // Map 300-1000px to roughly 30%-90% of preview width
@@ -1146,7 +1211,12 @@ const WallpaperManager = (function () {
         const previewScale = scale / 100;
         const inner = _elements.previewSearchBox.querySelector('.preview-search-inner');
         if (inner) {
+            const shadowAlpha = Math.min(1, Math.max(0, shadow / 100));
+            const shadowSoft = Math.min(1, Math.max(0, shadowAlpha * 0.5));
+
             inner.style.transform = `scale(${previewScale})`;
+            inner.style.borderRadius = `${radius}px`;
+            inner.style.boxShadow = `0 12px 34px rgba(0,0,0, ${shadowAlpha}), 0 6px 18px rgba(0,0,0, ${shadowSoft})`;
         }
     }
 
@@ -1207,9 +1277,13 @@ const WallpaperManager = (function () {
             searchWidthSlider: document.getElementById('searchWidthSlider'),
             searchPositionSlider: document.getElementById('searchPositionSlider'),
             searchScaleSlider: document.getElementById('searchScaleSlider'),
+            searchRadiusSlider: document.getElementById('searchRadiusSlider'),
+            searchShadowSlider: document.getElementById('searchShadowSlider'),
             searchWidthValue: document.getElementById('searchWidthValue'),
             searchPositionValue: document.getElementById('searchPositionValue'),
-            searchScaleValue: document.getElementById('searchScaleValue')
+            searchScaleValue: document.getElementById('searchScaleValue'),
+            searchRadiusValue: document.getElementById('searchRadiusValue'),
+            searchShadowValue: document.getElementById('searchShadowValue')
         };
     }
 
@@ -1257,6 +1331,12 @@ const WallpaperManager = (function () {
         if (_elements.searchScaleSlider) {
             _elements.searchScaleSlider.addEventListener('input', _handleSearchScaleChange);
         }
+        if (_elements.searchRadiusSlider) {
+            _elements.searchRadiusSlider.addEventListener('input', _handleSearchRadiusChange);
+        }
+        if (_elements.searchShadowSlider) {
+            _elements.searchShadowSlider.addEventListener('input', _handleSearchShadowChange);
+        }
 
         // Reset button
         if (_elements.resetWallpaper) {
@@ -1288,9 +1368,11 @@ const WallpaperManager = (function () {
             try {
                 const parsed = JSON.parse(savedSearchBoxSettings);
                 _state.searchBoxSettings = {
-                    width: parsed.width ?? 600,
-                    position: parsed.position ?? 40,
-                    scale: parsed.scale ?? 100
+                    width: _clampSearchValue(parsed.width, SEARCH_LIMITS.width),
+                    position: _clampSearchValue(parsed.position, SEARCH_LIMITS.position),
+                    scale: _clampSearchValue(parsed.scale, SEARCH_LIMITS.scale),
+                    radius: _clampSearchValue(parsed.radius, SEARCH_LIMITS.radius),
+                    shadow: _clampSearchValue(parsed.shadow, SEARCH_LIMITS.shadow)
                 };
             } catch (e) {
                 console.warn('Failed to parse search box settings:', e);
@@ -1303,7 +1385,7 @@ const WallpaperManager = (function () {
      */
     function _syncUI() {
         const { blur, vignette } = _state.wallpaperSettings;
-        const { width, position, scale } = _state.searchBoxSettings;
+        const { width, position, scale, radius, shadow } = _state.searchBoxSettings;
 
         // Sync wallpaper effect sliders
         if (_elements.blurSlider) {
@@ -1330,13 +1412,25 @@ const WallpaperManager = (function () {
             _elements.searchPositionSlider.value = position;
         }
         if (_elements.searchPositionValue) {
-            _elements.searchPositionValue.textContent = `${position}vh`;
+            _elements.searchPositionValue.textContent = `${position}%`;
         }
         if (_elements.searchScaleSlider) {
             _elements.searchScaleSlider.value = scale;
         }
         if (_elements.searchScaleValue) {
             _elements.searchScaleValue.textContent = `${scale}%`;
+        }
+        if (_elements.searchRadiusSlider) {
+            _elements.searchRadiusSlider.value = radius;
+        }
+        if (_elements.searchRadiusValue) {
+            _elements.searchRadiusValue.textContent = `${radius}px`;
+        }
+        if (_elements.searchShadowSlider) {
+            _elements.searchShadowSlider.value = shadow;
+        }
+        if (_elements.searchShadowValue) {
+            _elements.searchShadowValue.textContent = `${shadow}%`;
         }
 
         // Always show wallpaper controls (works with both custom and Bing wallpaper)

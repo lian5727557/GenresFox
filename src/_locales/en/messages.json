@@ -62,6 +62,12 @@
     "searchBoxPosition": {
         "message": "Vertical Position"
     },
+    "searchBoxRadius": {
+        "message": "Corner Radius"
+    },
+    "searchBoxShadow": {
+        "message": "Shadow Strength"
+    },
     "showShortcutNames": {
         "message": "Show shortcut names"
     },
