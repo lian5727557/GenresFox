@@ -355,59 +355,173 @@ function getFavicon(url) {
     }
 }
 
-// --- Icon Caching Logic ---
-async function cacheIcon(key, url) {
-    try {
-        // Try direct fetch first (works for same-origin or CORS-enabled)
-        const response = await fetch(url, { mode: 'cors' });
-        if (!response.ok) throw new Error('Network response was not ok');
-        const blob = await response.blob();
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            localStorage.setItem(`icon_cache_${key}`, reader.result);
-            // Don't call updateUI here to avoid infinite loop, just update the specific image
-            document.querySelectorAll(`img[data-cache-key="${key}"]`).forEach(img => {
-                img.src = reader.result;
-            });
+// --- Icon Caching Logic (IndexedDB with expiry and fallback) ---
+const ICON_CACHE_DB_NAME = 'genresfox-icon-cache';
+const ICON_CACHE_STORE = 'icons';
+const ICON_CACHE_DB_VERSION = 1;
+const ICON_CACHE_VERSION = 1;
+const ICON_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+const _iconCacheInMemory = new Map();
+const _iconCacheInFlight = new Map();
+let _iconCacheDbPromise = null;
+
+function _openIconCacheDB() {
+    if (_iconCacheDbPromise) return _iconCacheDbPromise;
+    _iconCacheDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(ICON_CACHE_DB_NAME, ICON_CACHE_DB_VERSION);
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(ICON_CACHE_STORE)) {
+                db.createObjectStore(ICON_CACHE_STORE, { keyPath: 'key' });
+            }
         };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+    return _iconCacheDbPromise;
+}
+
+function _isIconFresh(entry) {
+    if (!entry) return false;
+    if (entry.version !== ICON_CACHE_VERSION) return false;
+    return (Date.now() - entry.updatedAt) < ICON_CACHE_TTL;
+}
+
+async function _getIconFromDB(key) {
+    const db = await _openIconCacheDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(ICON_CACHE_STORE, 'readonly');
+        const store = tx.objectStore(ICON_CACHE_STORE);
+        const req = store.get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function _putIconToDB(key, dataUrl) {
+    const db = await _openIconCacheDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(ICON_CACHE_STORE, 'readwrite');
+        const store = tx.objectStore(ICON_CACHE_STORE);
+        const record = { key, data: dataUrl, updatedAt: Date.now(), version: ICON_CACHE_VERSION };
+        store.put(record);
+        tx.oncomplete = () => resolve(record);
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+function _updateImagesForKey(key, dataUrl) {
+    document.querySelectorAll(`img[data-cache-key="${key}"]`).forEach(img => {
+        img.src = dataUrl;
+    });
+}
+
+async function _fetchIconAsDataUrl(url) {
+    // Direct fetch first
+    const response = await fetch(url, { mode: 'cors' });
+    if (!response.ok) throw new Error('Network response was not ok');
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
         reader.readAsDataURL(blob);
-    } catch (error) {
-        // If direct fetch fails, try using an Image element (can load cross-origin images)
-        try {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = () => {
+    });
+}
+
+async function _loadIconViaImage(url) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width || 64;
+                canvas.height = img.height || 64;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                resolve(canvas.toDataURL('image/png'));
+            } catch (err) {
+                reject(err);
+            }
+        };
+        img.onerror = () => reject(new Error('Image load failed'));
+        img.src = url;
+    });
+}
+
+async function cacheIcon(key, url) {
+    if (_iconCacheInFlight.has(key)) return _iconCacheInFlight.get(key);
+
+    const task = (async () => {
+        // Attempt direct URL; on failure fall back to favicon API once.
+        const fallbackUrl = getFavicon(url);
+        const candidates = [url];
+        if (fallbackUrl && fallbackUrl !== url) candidates.push(fallbackUrl);
+
+        for (const candidate of candidates) {
+            try {
+                const dataUrl = await _fetchIconAsDataUrl(candidate);
+                _iconCacheInMemory.set(key, { data: dataUrl, updatedAt: Date.now(), version: ICON_CACHE_VERSION });
+                await _putIconToDB(key, dataUrl);
+                _updateImagesForKey(key, dataUrl);
+                // Keep legacy localStorage for backward compatibility
+                localStorage.setItem(`icon_cache_${key}`, dataUrl);
+                return;
+            } catch (fetchErr) {
+                // If fetch failed, try canvas-based fallback
                 try {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width || 64;
-                    canvas.height = img.height || 64;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    const dataUrl = canvas.toDataURL('image/png');
+                    const dataUrl = await _loadIconViaImage(candidate);
+                    _iconCacheInMemory.set(key, { data: dataUrl, updatedAt: Date.now(), version: ICON_CACHE_VERSION });
+                    await _putIconToDB(key, dataUrl);
+                    _updateImagesForKey(key, dataUrl);
                     localStorage.setItem(`icon_cache_${key}`, dataUrl);
-                    document.querySelectorAll(`img[data-cache-key="${key}"]`).forEach(imgEl => {
-                        imgEl.src = dataUrl;
-                    });
-                } catch (canvasError) {
-                    // Canvas tainted by cross-origin data, can't cache
-                    console.warn(`Cannot cache icon (CORS): ${key}`);
+                    return;
+                } catch (imgErr) {
+                    // Continue to next candidate
                 }
-            };
-            img.onerror = () => {
-                console.warn(`Failed to load icon for caching: ${key}`);
-            };
-            img.src = url;
-        } catch (imgError) {
-            console.warn(`Failed to cache icon for ${key}`, imgError);
+            }
         }
-    }
+        console.warn(`Failed to cache icon: ${key}`);
+    })().finally(() => {
+        _iconCacheInFlight.delete(key);
+    });
+
+    _iconCacheInFlight.set(key, task);
+    return task;
 }
 
 function getIconSrc(key, url) {
-    const cached = localStorage.getItem(`icon_cache_${key}`);
-    if (cached) return cached;
-    // Schedule caching in background
-    setTimeout(() => cacheIcon(key, url), 100);
+    // 1) In-memory cache
+    const mem = _iconCacheInMemory.get(key);
+    if (mem && _isIconFresh(mem)) return mem.data;
+
+    // 2) Legacy localStorage (migrate to DB asynchronously)
+    const legacy = localStorage.getItem(`icon_cache_${key}`);
+    if (legacy) {
+        _iconCacheInMemory.set(key, { data: legacy, updatedAt: 0, version: ICON_CACHE_VERSION });
+        _putIconToDB(key, legacy).catch(() => {});
+        // Refresh asynchronously to ensure freshness
+        cacheIcon(key, url);
+        return legacy;
+    }
+
+    // 3) IndexedDB async fetch; update DOM when ready
+    _getIconFromDB(key).then(entry => {
+        if (entry && _isIconFresh(entry)) {
+            _iconCacheInMemory.set(key, entry);
+            _updateImagesForKey(key, entry.data);
+        } else if (entry && entry.data) {
+            // Stale: show it first, then refresh
+            _iconCacheInMemory.set(key, entry);
+            _updateImagesForKey(key, entry.data);
+            cacheIcon(key, url);
+        } else {
+            cacheIcon(key, url);
+        }
+    }).catch(() => cacheIcon(key, url));
+
+    // 4) Fallback to live URL while cache resolves
     return url;
 }
 
@@ -488,9 +602,20 @@ function renderShortcutsList() {
 
         const spanInfo = document.createElement("span");
         const img = document.createElement('img');
-        img.src = shortcut.icon;
+        // Prefer cached icon; cache key matches grid view (url as stable identifier)
+        const cacheKey = `shortcut_${shortcut.url}`;
+        img.src = getIconSrc(cacheKey, shortcut.icon);
+        img.dataset.cacheKey = cacheKey;
         img.width = 20;
         img.height = 20;
+        img.onerror = () => {
+            // Fallback to first letter to avoid repeated remote fetch retries
+            img.style.display = 'none';
+            const fallback = document.createElement('span');
+            fallback.textContent = shortcut.name.charAt(0).toUpperCase();
+            fallback.style.fontWeight = '600';
+            spanInfo.appendChild(fallback);
+        };
         spanInfo.appendChild(img);
         spanInfo.appendChild(document.createTextNode(' ' + shortcut.name));
         div.appendChild(spanInfo);
