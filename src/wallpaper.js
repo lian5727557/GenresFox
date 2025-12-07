@@ -18,7 +18,8 @@ const WallpaperManager = (function () {
             SEARCH_BOX_SETTINGS: 'searchBoxSettings',
             LEGACY_WALLPAPER: 'wallpaper',
             BING_WALLPAPER_CACHE: 'bingWallpaperCache',
-            WALLPAPER_SOURCE: 'wallpaperSource'
+            WALLPAPER_SOURCE: 'wallpaperSource',
+            BING_MARKET: 'bingMarket'
         },
         CSS_VARS: {
             WALLPAPER_IMAGE: '--wallpaper-image',
@@ -69,7 +70,8 @@ const WallpaperManager = (function () {
         bingWallpaperInfo: null,
         isInitialized: false,
         dbInstance: null,
-        bingPreloadScheduled: false
+        bingPreloadScheduled: false,
+        bingMarket: 'en-US'
     };
 
     // In-memory LRU cache for Bing blobs
@@ -459,15 +461,68 @@ const WallpaperManager = (function () {
         });
     }
 
+    async function _removeBingCacheEntry(key) {
+        try {
+            const db = await _openDB();
+            await new Promise((resolve) => {
+                const tx = db.transaction([CONFIG.BING_CACHE.DB_STORE_NAME], 'readwrite');
+                const store = tx.objectStore(CONFIG.BING_CACHE.DB_STORE_NAME);
+                store.delete(key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            });
+        } catch (e) {
+            // Silent failure; best effort
+        }
+    }
+
     /**
-     * Get today's date string (YYYYMMDD format, in local timezone)
+     * Get today's date string (YYYYMMDD) using browser timezone
      * @param {number} offsetDays - Days to offset (0 = today, 1 = tomorrow, -1 = yesterday)
      * @returns {string}
      */
     function _getDateString(offsetDays = 0) {
-        const date = new Date();
-        date.setDate(date.getDate() + offsetDays);
-        return date.toISOString().slice(0, 10).replace(/-/g, '');
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        const target = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
+        return formatter.format(target).replace(/-/g, '');
+    }
+
+    /**
+     * Detect Bing market from browser language, fallback to en-US
+     * @returns {string}
+     */
+    function _detectBingMarket() {
+        const lang = (navigator.languages && navigator.languages[0]) || navigator.language || 'en-US';
+        // Normalize underscores to hyphen (e.g., zh_CN -> zh-CN)
+        const normalized = lang.replace('_', '-');
+        return normalized || 'en-US';
+    }
+
+    /**
+     * Get start-of-today timestamp (local timezone)
+     * @returns {number}
+     */
+    function _getStartOfTodayTs() {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        const parts = formatter.formatToParts(new Date());
+        const y = parts.find(p => p.type === 'year')?.value;
+        const m = parts.find(p => p.type === 'month')?.value;
+        const d = parts.find(p => p.type === 'day')?.value;
+        const iso = `${y}-${m}-${d}T00:00:00`;
+        const ts = new Date(iso).getTime();
+        return Number.isFinite(ts) ? ts : Date.now();
     }
 
     /**
@@ -503,6 +558,17 @@ const WallpaperManager = (function () {
                 request.onsuccess = () => {
                     const result = request.result;
                     if (result && result.blob) {
+                        // Stale guard: date mismatch or past today's boundary
+                        const entryDate = result.date || result.info?.date;
+                        const startOfToday = _getStartOfTodayTs();
+                        const entryTs = result.timestamp || result.lastAccess || 0;
+                        const isDateMismatch = entryDate && entryDate !== dateStr;
+                        const isTooOld = entryTs && entryTs < startOfToday;
+                        if (isDateMismatch || isTooOld) {
+                            _removeBingCacheEntry(key);
+                            resolve(null);
+                            return;
+                        }
                         console.log(`Bing wallpaper cache hit for ${dateStr}`);
                         _putBingMem(key, result.blob);
                         _updateBingLastAccess(db, key, Date.now());
@@ -781,7 +847,13 @@ const WallpaperManager = (function () {
 
             const data = JSON.parse(cached);
             
-            // Check if cache is for today
+            // Check if cache is for today and not older than start-of-day
+            const startOfToday = _getStartOfTodayTs();
+            const cacheTs = data.timestamp || 0;
+            if (cacheTs < startOfToday) {
+                localStorage.removeItem(CONFIG.STORAGE_KEYS.BING_WALLPAPER_CACHE);
+                return null;
+            }
             if (data.info && _isBingCacheValid(data.info.date)) {
                 return data.info;
             }
