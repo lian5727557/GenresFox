@@ -8,6 +8,17 @@ const SearchBar = (function () {
         const trimmed = value.trim();
         if (!trimmed || /\s/.test(trimmed)) return false;
 
+        // Fast heuristics: only treat as URL when it has a clear URL shape
+        const hasProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+        const isIp = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(\/|$)/.test(trimmed);
+        const isLocalhost = /^localhost(:\d+)?(\/|$)/i.test(trimmed);
+        const hasDotDomain = /[a-z0-9-]+\.[a-z0-9.-]{2,}/i.test(trimmed);
+
+        if (!hasProtocol && !isIp && !isLocalhost && !hasDotDomain) {
+            // Looks more like a query (e.g., 单个词/短语无点号)
+            return false;
+        }
+
         const ensureProtocol = (v) => (/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`);
 
         try {
@@ -16,11 +27,7 @@ const SearchBar = (function () {
             if (proto !== 'http:' && proto !== 'https:') return false;
             return Boolean(url.hostname);
         } catch (e) {
-            // Fallback patterns for localhost/IP/basic domains
-            const isLocalhost = /^localhost(:\d+)?(\/|$)/i.test(trimmed);
-            const isIp = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(\/|$)/.test(trimmed);
-            const isDomain = /^[\w.-]+\.[a-z\u00a1-\uffff]{2,}(?::\d+)?(\/|$)/i.test(trimmed);
-            return isLocalhost || isIp || isDomain;
+            return false;
         }
     }
 

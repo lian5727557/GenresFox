@@ -1500,7 +1500,8 @@ const WallpaperManager = (function () {
             searchPositionValue: document.getElementById('searchPositionValue'),
             searchScaleValue: document.getElementById('searchScaleValue'),
             searchRadiusValue: document.getElementById('searchRadiusValue'),
-            searchShadowValue: document.getElementById('searchShadowValue')
+            searchShadowValue: document.getElementById('searchShadowValue'),
+            useBingWallpaper: document.getElementById('useBingWallpaper')
         };
     }
 
@@ -1558,6 +1559,11 @@ const WallpaperManager = (function () {
         // Reset button
         if (_elements.resetWallpaper) {
             _elements.resetWallpaper.addEventListener('click', _resetWallpaper);
+        }
+
+        // Wallpaper source switches
+        if (_elements.useBingWallpaper) {
+            _elements.useBingWallpaper.addEventListener('click', () => _applyBingWallpaper());
         }
     }
 
@@ -1666,8 +1672,12 @@ const WallpaperManager = (function () {
     async function _loadWallpaper() {
         let wallpaperLoaded = false;
 
-        // Check saved wallpaper source preference
-        const savedSource = localStorage.getItem(CONFIG.STORAGE_KEYS.WALLPAPER_SOURCE);
+        // Check saved wallpaper source preference (clean up legacy values)
+        let savedSource = localStorage.getItem(CONFIG.STORAGE_KEYS.WALLPAPER_SOURCE);
+        if (savedSource && savedSource !== CONFIG.WALLPAPER_SOURCES.BING && savedSource !== CONFIG.WALLPAPER_SOURCES.CUSTOM) {
+            savedSource = CONFIG.WALLPAPER_SOURCES.BING;
+            localStorage.setItem(CONFIG.STORAGE_KEYS.WALLPAPER_SOURCE, savedSource);
+        }
 
         // Try loading custom wallpaper from IndexedDB first
         try {
@@ -1700,7 +1710,18 @@ const WallpaperManager = (function () {
             }
         }
 
-        // If no custom wallpaper, try Bing daily wallpaper
+        // If nothing loaded yet, respect saved source preference
+        if (!wallpaperLoaded) {
+            try {
+                // Don't block UI on network; kick off Bing fetch in background
+                _applyBingWallpaper().catch((e) => console.warn('Failed to load Bing wallpaper (async):', e));
+                wallpaperLoaded = true; // allow UI to continue with transparent/previous state
+            } catch (e) {
+                console.warn('Failed to load preferred wallpaper source:', e);
+            }
+        }
+
+        // If still no wallpaper, fall back to Bing daily wallpaper
         if (!wallpaperLoaded) {
             try {
                 const bingLoaded = await _applyBingWallpaper();

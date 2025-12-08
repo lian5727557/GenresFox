@@ -843,6 +843,19 @@ input[type="text"]:focus {
     font-style: italic;
 }
 
+.wallpaper-source-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.wallpaper-source-options .btn-secondary {
+    display: flex;
+    align-items: center;
+    flex: 1 1 180px;
+    justify-content: center;
+}
+
 /* Sortable list styles */
 .sortable-list .list-item {
     cursor: grab;
@@ -956,8 +969,8 @@ input[type="text"]:focus {
 .shortcut-icon {
     width: 48px;
     height: 48px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1.2px solid rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.16);
+    border: 1.2px solid rgba(255, 255, 255, 0.28);
     border-radius: 12px;
     display: flex;
     justify-content: center;
@@ -973,8 +986,8 @@ input[type="text"]:focus {
 }
 
 .shortcut-item:hover .shortcut-icon {
-    background: rgba(255, 255, 255, 0.18);
-    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.24);
+    border-color: rgba(255, 255, 255, 0.36);
     box-shadow:
         0 0 0 1.2px rgba(255, 255, 255, 0.18),
         0 10px 26px rgba(0, 0, 0, 0.26);
@@ -996,16 +1009,46 @@ input[type="text"]:focus {
     width: 100%;
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
     font-weight: 500;
-    transition: opacity 0.3s ease, max-height 0.3s ease;
+    transition: opacity 0.3s ease, max-height 0.3s ease, transform 0.25s ease;
     max-height: 20px;
 }
 
 /* Hide shortcut names when disabled */
 .shortcuts-grid.hide-names .shortcut-name {
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    transform: translate(-50%, 8px);
+    padding: 0 10px;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 10px;
     opacity: 0;
     max-height: 0;
     margin-top: 0;
     overflow: hidden;
+    pointer-events: none;
+    width: max-content;
+    max-width: 180px;
+    min-width: 64px;
+    text-overflow: ellipsis;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    transition: opacity 0.25s ease, transform 0.25s ease, max-height 0.25s ease, padding 0.25s ease;
+}
+
+.shortcuts-grid.hide-names .shortcut-item:hover,
+.shortcuts-grid.hide-names .shortcut-item:focus-visible {
+    z-index: 2;
+}
+
+.shortcuts-grid.hide-names .shortcut-item:hover .shortcut-name,
+.shortcuts-grid.hide-names .shortcut-item:focus-visible .shortcut-name {
+    opacity: 1;
+    max-height: 40px;
+    padding: 6px 10px;
+    transform: translate(-50%, 0);
 }
 
 .shortcuts-grid.hide-names .shortcut-icon {
