@@ -25,7 +25,8 @@ const WASM = {
     instance: null,
     exports: null,
     ready: false,
-    allocPtr: 0
+    allocPtr: 0,
+    heapCapacity: 0
 };
 
 /**
@@ -167,6 +168,7 @@ async function loadWasm(url) {
         WASM.exports = instance.exports;
         WASM.ready = true;
         WASM.allocPtr = 0;
+        WASM.heapCapacity = instance.exports?.memory?.buffer?.byteLength || 0;
         console.log('[Worker] WASM loaded');
     } catch (err) {
         console.warn('[Worker] WASM load failed:', err);
@@ -185,11 +187,11 @@ function wasmAlloc(size) {
     const pageSize = 64 * 1024;
     const alignedSize = (size + 7) & ~7;
     let needed = WASM.allocPtr + alignedSize;
-    const current = memory.buffer.byteLength;
-    if (needed > current) {
-        const growPages = Math.ceil((needed - current) / pageSize);
+    if (needed > WASM.heapCapacity) {
+        const growPages = Math.ceil((needed - WASM.heapCapacity) / pageSize);
         try {
             memory.grow(growPages);
+            WASM.heapCapacity = memory.buffer.byteLength;
         } catch (e) {
             return null;
         }

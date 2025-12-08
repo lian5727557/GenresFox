@@ -61,10 +61,11 @@ const ImageProcessor = (function() {
         supportsWebP: null,
         supportsOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
         activeObjectUrls: new Set(),
-        worker: null,
-        workerReady: false,
+        workers: [],
+        workerReadyCount: 0,
         workerCallbacks: new Map(),
-        callbackId: 0
+        callbackId: 0,
+        nextWorkerIndex: 0
     };
 
     // ==================== Cache ====================
@@ -159,87 +160,91 @@ const ImageProcessor = (function() {
     // ==================== Web Worker ====================
     
     /**
-     * Initialize Web Worker
+     * Initialize Web Worker pool
      */
-    function _initWorker() {
-        if (_state.worker || !_state.supportsOffscreenCanvas) return;
-        
-        try {
-            _state.worker = new Worker('image-worker.js');
-            
-            _state.worker.onmessage = (e) => {
-                const { type, id, result, error, progress } = e.data;
-                
-                const deliver = () => {
-                    switch (type) {
-                        case 'loaded':
-                            console.log('Image Worker loaded');
-                            return true;
-                            
-                        case 'ready':
-                            _state.workerReady = true;
-                            console.log('Image Worker ready');
-                            return true;
-                            
-                        case 'progress': {
-                            const progressCb = _state.workerCallbacks.get(id);
-                            if (progressCb?.onProgress) {
-                                progressCb.onProgress(progress);
+    function _initWorkers() {
+        if (!_state.supportsOffscreenCanvas) return;
+        if (_state.workers.length > 0) return;
+
+        const maxWorkers = Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 2) || 2));
+
+        for (let i = 0; i < maxWorkers; i++) {
+            try {
+                const worker = new Worker('image-worker.js');
+
+                worker.onmessage = (e) => {
+                    const { type, id, result, error, progress } = e.data;
+
+                    const deliver = () => {
+                        switch (type) {
+                            case 'loaded':
                                 return true;
-                            }
-                            return false;
-                        }
-                        
-                        case 'complete':
-                        case 'previewComplete': {
-                            const cb = _state.workerCallbacks.get(id);
-                            if (cb?.resolve) {
-                                cb.resolve(result);
-                                _state.workerCallbacks.delete(id);
+                            case 'ready':
+                                if (!worker.__ready) {
+                                    worker.__ready = true;
+                                    _state.workerReadyCount++;
+                                }
                                 return true;
+                            case 'progress': {
+                                const progressCb = _state.workerCallbacks.get(id);
+                                if (progressCb?.onProgress) {
+                                    progressCb.onProgress(progress);
+                                    return true;
+                                }
+                                return false;
                             }
-                            return false;
-                        }
-                        
-                        case 'error': {
-                            const errCb = _state.workerCallbacks.get(id);
-                            if (errCb?.reject) {
-                                errCb.reject(new Error(error));
-                                _state.workerCallbacks.delete(id);
-                                return true;
+                            case 'complete':
+                            case 'previewComplete': {
+                                const cb = _state.workerCallbacks.get(id);
+                                if (cb?.resolve) {
+                                    cb.resolve(result);
+                                    _state.workerCallbacks.delete(id);
+                                    return true;
+                                }
+                                return false;
                             }
-                            return false;
+                            case 'error': {
+                                const errCb = _state.workerCallbacks.get(id);
+                                if (errCb?.reject) {
+                                    errCb.reject(new Error(error));
+                                    _state.workerCallbacks.delete(id);
+                                    return true;
+                                }
+                                return false;
+                            }
                         }
+                        return true;
+                    };
+
+                    if (!deliver()) {
+                        queueMicrotask(() => {
+                            if (!deliver()) {
+                                console.warn(`Worker message without callback (id=${id}, type=${type})`);
+                            }
+                        });
                     }
-                    return true;
                 };
 
-                if (!deliver()) {
-                    // If message arrives before callback registration, retry in next microtask
-                    queueMicrotask(() => {
-                        if (!deliver()) {
-                            console.warn(`Worker message without callback (id=${id}, type=${type})`);
-                        }
-                    });
-                }
-            };
-            
-            _state.worker.onerror = (e) => {
-                console.error('Worker error:', e);
-                _state.worker = null;
-                _state.workerReady = false;
-            };
-            
-            // Initialize worker with config
-            _state.worker.postMessage({
-                type: 'init',
-                id: 0,
-                data: { config: CONFIG }
-            });
-            
-        } catch (e) {
-            console.warn('Failed to create Worker:', e);
-            _state.worker = null;
+                worker.onerror = (e) => {
+                    console.error('Worker error:', e);
+                    if (worker.__ready) {
+                        worker.__ready = false;
+                        _state.workerReadyCount = Math.max(0, _state.workerReadyCount - 1);
+                    }
+                };
+
+                worker.__ready = false;
+                _state.workers.push(worker);
+
+                // Initialize worker with config
+                worker.postMessage({
+                    type: 'init',
+                    id: 0,
+                    data: { config: CONFIG }
+                });
+            } catch (e) {
+                console.warn('Failed to create Worker:', e);
+            }
         }
     }
     
@@ -248,15 +253,32 @@ const ImageProcessor = (function() {
      */
     function _workerProcess(type, data, onProgress) {
         return new Promise((resolve, reject) => {
-            if (!_state.worker || !_state.workerReady) {
+            if (_state.workerReadyCount === 0 || _state.workers.length === 0) {
                 reject(new Error('Worker not available'));
+                return;
+            }
+
+            // Round-robin pick a ready worker
+            let worker = null;
+            const total = _state.workers.length;
+            for (let i = 0; i < total; i++) {
+                const idx = (_state.nextWorkerIndex + i) % total;
+                if (_state.workers[idx]?.__ready) {
+                    worker = _state.workers[idx];
+                    _state.nextWorkerIndex = (idx + 1) % total;
+                    break;
+                }
+            }
+
+            if (!worker) {
+                reject(new Error('No ready worker'));
                 return;
             }
             
             const id = ++_state.callbackId;
             _state.workerCallbacks.set(id, { resolve, reject, onProgress });
             
-            _state.worker.postMessage({ type, id, data });
+            worker.postMessage({ type, id, data });
         });
     }
 
@@ -739,7 +761,7 @@ const ImageProcessor = (function() {
             let blob;
             
             // Try Worker first if available and enabled
-            if (useWorker && _state.worker && _state.workerReady && _state.supportsOffscreenCanvas) {
+            if (useWorker && _state.workerReadyCount > 0 && _state.supportsOffscreenCanvas) {
                 try {
                     console.log('Processing with Worker');
                     const imageData = await _getImageData(img);
@@ -861,7 +883,7 @@ const ImageProcessor = (function() {
      * Initialize module
      */
     function init() {
-        _initWorker();
+        _initWorkers();
         _checkWebPSupport();
     }
 
@@ -906,7 +928,7 @@ const ImageProcessor = (function() {
         // State
         isProcessing: () => _state.isProcessing,
         getActiveUrlCount: () => _state.activeObjectUrls.size,
-        isWorkerAvailable: () => _state.workerReady,
+        isWorkerAvailable: () => _state.workerReadyCount > 0,
         
         // Manual init
         init
