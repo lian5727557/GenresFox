@@ -17,7 +17,8 @@ let CONFIG = {
     FALLBACK_FORMAT: 'image/jpeg',
     TARGET_OUTPUT_SIZE: 5 * 1024 * 1024,
     WASM_URL: null,
-    WASM_ENABLED: false
+    WASM_ENABLED: false,
+    MAX_PIXELS: 80 * 1000 * 1000 // Keep for symmetry; enforced in main thread
 };
 
 // WASM state
@@ -273,30 +274,49 @@ ctx.onmessage = async function(e) {
                     maxHeight, 
                     screenWidth, 
                     screenHeight,
-                    format 
+                    format,
+                    alreadyScaled,
+                    originalWidth,
+                    originalHeight
                 } = data;
                 
                 const startTime = performance.now();
                 
-                // Calculate target dimensions
-                const { width: targetWidth, height: targetHeight } = calculateDimensions(
-                    imageData.width,
-                    imageData.height,
-                    maxWidth || CONFIG.MAX_WIDTH,
-                    maxHeight || CONFIG.MAX_HEIGHT,
-                    screenWidth,
-                    screenHeight
-                );
-                
-                // Process image
-                const canvas = await processImageData(
-                    imageData,
-                    targetWidth,
-                    targetHeight,
-                    (progress) => {
-                        ctx.postMessage({ type: 'progress', progress, id });
-                    }
-                );
+                let targetWidth = maxWidth || CONFIG.MAX_WIDTH;
+                let targetHeight = maxHeight || CONFIG.MAX_HEIGHT;
+                let canvas;
+
+                if (alreadyScaled) {
+                    // ImageData already at target dimensions; write directly to output (无需再缩放)
+                    targetWidth = imageData.width;
+                    targetHeight = imageData.height;
+                    canvas = new OffscreenCanvas(targetWidth, targetHeight);
+                    const outCtx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+                    outCtx.putImageData(imageData, 0, 0);
+                    if (onProgress) ctx.postMessage({ type: 'progress', progress: 60, id });
+                } else {
+                    // Calculate target dimensions
+                    const dims = calculateDimensions(
+                        imageData.width,
+                        imageData.height,
+                        maxWidth || CONFIG.MAX_WIDTH,
+                        maxHeight || CONFIG.MAX_HEIGHT,
+                        screenWidth,
+                        screenHeight
+                    );
+                    targetWidth = dims.width;
+                    targetHeight = dims.height;
+                    
+                    // Process image
+                    canvas = await processImageData(
+                        imageData,
+                        targetWidth,
+                        targetHeight,
+                        (progress) => {
+                            ctx.postMessage({ type: 'progress', progress, id });
+                        }
+                    );
+                }
                 
                 ctx.postMessage({ type: 'progress', progress: 75, id });
                 
@@ -316,8 +336,8 @@ ctx.onmessage = async function(e) {
                         blob,
                         width: targetWidth,
                         height: targetHeight,
-                        originalWidth: imageData.width,
-                        originalHeight: imageData.height,
+                        originalWidth: originalWidth || imageData.width,
+                        originalHeight: originalHeight || imageData.height,
                         processedSize: blob.size,
                         processingTime: Math.round(endTime - startTime)
                     }

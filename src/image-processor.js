@@ -36,7 +36,7 @@ const ImageProcessor = (function() {
         HUGE_IMAGE_THRESHOLD: 30 * 1024 * 1024,   // 30MB
         
         // Pixel count limits
-        MAX_PIXELS: 50 * 1000 * 1000,  // 50 megapixels max
+        MAX_PIXELS: 80 * 1000 * 1000,  // 80 megapixels max
         
         // Memory management
         CHUNK_SIZE: 2048,
@@ -411,6 +411,24 @@ const ImageProcessor = (function() {
         return imageData;
     }
 
+    /**
+     * Get scaled ImageData at target dimensions (reduces memory for huge sources)
+     */
+    async function _getScaledImageData(img, targetWidth, targetHeight) {
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d', {
+            alpha: false,
+            desynchronized: true
+        });
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+        canvas.width = 0;
+        canvas.height = 0;
+        return imageData;
+    }
+
     // ==================== Canvas Processing ====================
 
     /**
@@ -764,16 +782,19 @@ const ImageProcessor = (function() {
             if (useWorker && _state.workerReadyCount > 0 && _state.supportsOffscreenCanvas) {
                 try {
                     console.log('Processing with Worker');
-                    const imageData = await _getImageData(img);
+                    const scaledImageData = await _getScaledImageData(img, targetWidth, targetHeight);
                     _revokeTrackedObjectUrl(img.src);
                     
                     const result = await _workerProcess('process', {
-                        imageData,
-                        maxWidth,
-                        maxHeight,
+                        imageData: scaledImageData,
+                        maxWidth: targetWidth,
+                        maxHeight: targetHeight,
                         screenWidth: window.screen.width * (window.devicePixelRatio || 1),
                         screenHeight: window.screen.height * (window.devicePixelRatio || 1),
-                        format: await _getOutputFormat()
+                        format: await _getOutputFormat(),
+                        alreadyScaled: true,
+                        originalWidth,
+                        originalHeight
                     }, onProgress);
                     
                     blob = result.blob;
