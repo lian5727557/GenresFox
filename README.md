@@ -26,7 +26,7 @@
 - **🖼️ Custom Wallpapers**: Upload your own background images (up to 50MB, 50MP) with drag-and-drop support
 - **🌅 Bing Daily Wallpaper**: Beautiful daily wallpapers from Bing with smart 24-hour caching and preloading
 - **⚡ High-Performance Image Processing**: Web Worker support, progressive preview, and intelligent compression
-- **🌍 Multi-language**: English, Simplified Chinese, Traditional Chinese, Japanese, Spanish, French
+- **🌍 Multi-language**: English, Simplified Chinese, Traditional Chinese, Japanese, Spanish, French, German, Russian
 - **♿ Accessibility**: High contrast themes, font controls, animation settings, keyboard shortcuts
 - **⌨️ Keyboard Shortcuts**: Quick engine switching (Alt+↑↓), focus search (/), open settings (Alt+,)
 - **💾 Smart Caching**: Icon caching, wallpaper caching, and processing result caching for faster loading
@@ -91,6 +91,8 @@ GenresFox/
 │   │   ├── en/
 │   │   ├── es/
 │   │   ├── fr/
+│   │   ├── de/
+│   │   ├── ru/
 │   │   ├── ja/
 │   │   ├── zh_CN/
 │   │   └── zh_TW/
@@ -148,6 +150,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - GitHub: [@zayoka](https://github.com/zayokami)
 
+### Contributor
+
+**KafuuChino**
+
+- GitHub: [@KafuuChino](https://github.com/lian5727557)
+
 ### 🙏 Acknowledgments
 
 - Inspired by modern web design trends
@@ -168,7 +176,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **🖼️ 自定义壁纸**: 上传您自己的背景图片（最大 50MB，5000万像素），支持拖放上传
 - **🌅 必应每日壁纸**: 来自必应的精美每日壁纸，支持智能24小时缓存和预加载
 - **⚡ 高性能图片处理**: Web Worker 支持、渐进式预览、智能压缩
-- **🌍 多语言支持**: 简体中文、繁体中文、日语、英语、西班牙语、法语
+- **🌍 多语言支持**: 简体中文、繁体中文、日语、英语、西班牙语、法语、德语、俄语
 - **♿ 无障碍功能**: 高对比度主题、字体控制、动画设置、键盘快捷键
 - **⌨️ 键盘快捷键**: 快速切换搜索引擎 (Alt+↑↓)、聚焦搜索框 (/)、打开设置 (Alt+,)
 - **💾 智能缓存**: 图标缓存、壁纸缓存、处理结果缓存，加快加载速度
@@ -233,6 +241,8 @@ GenresFox/
 │   │   ├── en/
 │   │   ├── es/
 │   │   ├── fr/
+│   │   ├── de/
+│   │   ├── ru/
 │   │   ├── ja/
 │   │   ├── zh_CN/
 │   │   └── zh_TW/
@@ -289,6 +299,12 @@ GenresFox/
 **zayoka**
 
 - GitHub: [@zayoka](https://github.com/zayokami)
+
+### 贡献者
+
+**KafuuChino**
+
+- GitHub: [@KafuuChino](https://github.com/lian5727557)
 
 ### 🙏 致谢
 
