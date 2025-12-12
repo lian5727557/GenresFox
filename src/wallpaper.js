@@ -77,6 +77,8 @@ const WallpaperManager = (function () {
     // In-memory LRU cache for Bing blobs
     const _bingMemoryCache = new Map(); // key -> { blob, size, lastAccess }
     let _bingMemoryBytes = 0;
+    let _bingWallpaperPromise = null; // dedupe Bing fetch/apply
+    let _bingWarmPromise = null;      // best-effort cache warmer
 
     const SEARCH_LIMITS = {
         width: { min: 300, max: 1000, fallback: 600 },
@@ -817,36 +819,46 @@ const WallpaperManager = (function () {
      * @returns {Promise<{blob: Blob, info: Object}|null>}
      */
     async function _getBingWallpaper() {
-        const today = _getDateString(0);
-        
-        // Check IndexedDB cache first
-        const cachedBlob = await _getBingImageFromCache(today);
-        if (cachedBlob) {
-            // Get cached info from localStorage
-            const cachedInfo = _getBingWallpaperInfoCache();
-            return {
-                blob: cachedBlob,
-                info: cachedInfo || { date: today, title: 'Bing Daily Wallpaper' }
-            };
+        if (_bingWallpaperPromise) return _bingWallpaperPromise;
+
+        _bingWallpaperPromise = (async () => {
+            const today = _getDateString(0);
+            
+            // Check IndexedDB cache first
+            const cachedBlob = await _getBingImageFromCache(today);
+            if (cachedBlob) {
+                // Get cached info from localStorage
+                const cachedInfo = _getBingWallpaperInfoCache();
+                return {
+                    blob: cachedBlob,
+                    info: cachedInfo || { date: today, title: 'Bing Daily Wallpaper' }
+                };
+            }
+            
+            // Fetch fresh wallpaper info
+            const info = await _fetchBingWallpaperInfo(0);
+            if (!info) {
+                return null;
+            }
+            
+            // Download the image
+            const blob = await _downloadBingWallpaper(info);
+            if (!blob) {
+                return null;
+            }
+            
+            // Cache both the blob and info
+            await _saveBingImageToCache(today, blob, info);
+            _saveBingWallpaperInfoCache(info);
+            
+            return { blob, info };
+        })();
+
+        try {
+            return await _bingWallpaperPromise;
+        } finally {
+            _bingWallpaperPromise = null;
         }
-        
-        // Fetch fresh wallpaper info
-        const info = await _fetchBingWallpaperInfo(0);
-        if (!info) {
-            return null;
-        }
-        
-        // Download the image
-        const blob = await _downloadBingWallpaper(info);
-        if (!blob) {
-            return null;
-        }
-        
-        // Cache both the blob and info
-        await _saveBingImageToCache(today, blob, info);
-        _saveBingWallpaperInfoCache(info);
-        
-        return { blob, info };
     }
 
     /**
@@ -891,6 +903,24 @@ const WallpaperManager = (function () {
         } catch (e) {
             console.warn('Failed to cache Bing wallpaper info:', e);
         }
+    }
+
+    /**
+     * Warm today's Bing cache in the background so reset-to-default is instant.
+     * Best-effort: skips if cache already exists or a fetch is in-flight.
+     */
+    function _warmBingCache() {
+        if (_bingWarmPromise) return _bingWarmPromise;
+        _bingWarmPromise = (async () => {
+            try {
+                await _getBingWallpaper(); // uses cache if present
+            } catch (e) {
+                console.warn('Warm Bing cache failed:', e);
+            } finally {
+                _bingWarmPromise = null;
+            }
+        })();
+        return _bingWarmPromise;
     }
 
     /**
@@ -1125,6 +1155,10 @@ const WallpaperManager = (function () {
         try {
             // Check if ImageProcessor is available
             if (typeof ImageProcessor !== 'undefined') {
+                // Lazy init to avoid blocking first paint
+                if (!ImageProcessor.isWorkerAvailable()) {
+                    ImageProcessor.init();
+                }
                 // Use ImageProcessor for optimized handling
                 const statusLoading = _getLocalizedMessage('processingLoading', 'Loading image...');
                 const statusOptimizing = _getLocalizedMessage('processingOptimizing', 'Optimizing...');
@@ -1769,6 +1803,11 @@ const WallpaperManager = (function () {
 
         // 4. Load wallpaper (non-blocking to avoid first-paint stall)
         _loadWallpaper().catch((e) => console.warn('Wallpaper load failed:', e));
+
+        // 4.1 Warm today's Bing cache in background so switching is instant later
+        _runWhenIdle(() => {
+            _warmBingCache().catch((e) => console.warn('Bing cache warm failed:', e));
+        }, 1500);
 
         // 5. Apply effects
         _applyWallpaperEffects();
